@@ -175,6 +175,21 @@ void Surface::draw(Surface* dst, int src_x, int src_y,
   CGContextRelease(bitmap);
 }
 
+// kit-custom: no real scaling on macOS, fall back to a 1:1 copy
+void Surface::drawStretched(int src_x, int src_y,
+                            int /*src_w*/, int /*src_h*/,
+                            int dst_x, int dst_y, int dst_w, int dst_h)
+{
+  draw(src_x, src_y, dst_x, dst_y, dst_w, dst_h);
+}
+
+void Surface::drawStretched(Surface* dst, int src_x, int src_y,
+                            int /*src_w*/, int /*src_h*/,
+                            int dst_x, int dst_y, int dst_w, int dst_h)
+{
+  draw(dst, src_x, src_y, dst_x, dst_y, dst_w, dst_h);
+}
+
 void Surface::blend(int src_x, int src_y, int dst_x, int dst_y,
                     int dst_w, int dst_h, int a)
 {

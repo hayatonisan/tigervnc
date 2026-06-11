@@ -62,6 +62,19 @@ public:
   void handleClipboardAnnounce(bool available);
   void handleClipboardData(const char* data);
 
+  // kit-custom: client-side scaling. Widget size is the scaled size,
+  // the framebuffer keeps the server's logical size.
+  int scaleValue(int v) const { return v * scale / 100; }
+  int scaleCeil(int v) const { return (v * scale + 99) / 100; }
+  int unscaleValue(int v) const { return v * 100 / scale; }
+  int unscaleCeil(int v) const { return (v * 100 + scale - 1) / scale; }
+  int serverWidth() const;
+  int serverHeight() const;
+
+  // kit-custom: resize to a new server framebuffer size (reallocates
+  // the framebuffer and sets the widget to the scaled size)
+  void serverResize(int w, int h);
+
   // Fl_Widget callback methods
 
   void draw() override;
@@ -76,6 +89,12 @@ protected:
 
 private:
   bool hasFocus();
+
+  // kit-custom: clip rect (widget coords) -> logical src rect + its
+  // exact scaled dst rect
+  void computeScaledRects(int X, int Y, int W, int H,
+                          int* sx, int* sy, int* sw, int* sh,
+                          int* dx, int* dy, int* dw, int* dh);
 
   // Show the currently set (or system) cursor
   void showCursor();
@@ -109,6 +128,9 @@ private:
   CConn* cc;
 
   PlatformPixelBuffer* frameBuffer;
+
+  // kit-custom: display scale in percent (100 = off)
+  int scale;
 
   core::Point lastPointerPos;
   uint16_t lastButtonMask;

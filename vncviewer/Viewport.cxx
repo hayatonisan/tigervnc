@@ -95,6 +95,7 @@ static const int FAKE_KEY_CODE = 0xffff;
 
 Viewport::Viewport(int w, int h, CConn* cc_)
   : Fl_Widget(0, 0, w, h), cc(cc_), frameBuffer(nullptr),
+    scale(100),
     lastPointerPos(0, 0), lastButtonMask(0),
     keyboard(nullptr), shortcutBypass(false), shortcutActive(false),
     firstLEDState(true), pendingClientClipboard(false),
@@ -123,6 +124,14 @@ Viewport::Viewport(int w, int h, CConn* cc_)
   frameBuffer = new PlatformPixelBuffer(w, h);
   assert(frameBuffer);
   cc->setFramebuffer(frameBuffer);
+
+  // kit-custom: apply client-side scaling (widget gets the scaled
+  // size; the framebuffer above keeps the server's logical size)
+  scale = ::scalePercent;
+  if (scale < 25 || scale > 400)
+    scale = 100;
+  if (scale != 100)
+    Fl_Widget::resize(0, 0, scaleValue(w), scaleValue(h));
 
   contextMenu = new Fl_Menu_Button(0, 0, 0, 0);
   // Setting box type to FL_NO_BOX prevents it from trying to draw the
@@ -188,7 +197,18 @@ void Viewport::updateWindow()
   core::Rect r;
 
   r = frameBuffer->getDamage();
-  damage(FL_DAMAGE_USER1, r.tl.x + x(), r.tl.y + y(), r.width(), r.height());
+  if (scale == 100) {
+    damage(FL_DAMAGE_USER1, r.tl.x + x(), r.tl.y + y(),
+           r.width(), r.height());
+  } else {
+    // kit-custom: damage in scaled widget coordinates (floor the
+    // start, ceil the end so rounding never leaves stale strips)
+    int dx = scaleValue(r.tl.x);
+    int dy = scaleValue(r.tl.y);
+    int dw = scaleCeil(r.br.x) - dx;
+    int dh = scaleCeil(r.br.y) - dy;
+    damage(FL_DAMAGE_USER1, dx + x(), dy + y(), dw, dh);
+  }
 }
 
 static const char * dotcursor_xpm[] = {
@@ -383,6 +403,38 @@ void Viewport::pushLEDState()
 }
 
 
+// kit-custom: map a clip rectangle in widget coordinates to the
+// logical source rectangle plus the exact scaled destination of that
+// source rectangle (which may slightly exceed the clip; GDI clipping
+// crops the excess)
+void Viewport::computeScaledRects(int X, int Y, int W, int H,
+                                  int* sx, int* sy, int* sw, int* sh,
+                                  int* dx, int* dy, int* dw, int* dh)
+{
+  int lx0, ly0, lx1, ly1;
+
+  lx0 = unscaleValue(X - x());
+  ly0 = unscaleValue(Y - y());
+  lx1 = unscaleCeil(X - x() + W);
+  ly1 = unscaleCeil(Y - y() + H);
+
+  if (lx1 > frameBuffer->width())
+    lx1 = frameBuffer->width();
+  if (ly1 > frameBuffer->height())
+    ly1 = frameBuffer->height();
+
+  *sx = lx0;
+  *sy = ly0;
+  *sw = lx1 - lx0;
+  *sh = ly1 - ly0;
+
+  *dx = x() + scaleValue(lx0);
+  *dy = y() + scaleValue(ly0);
+  *dw = scaleCeil(lx1) - scaleValue(lx0);
+  *dh = scaleCeil(ly1) - scaleValue(ly0);
+}
+
+
 void Viewport::draw(Surface* dst)
 {
   int X, Y, W, H;
@@ -392,7 +444,15 @@ void Viewport::draw(Surface* dst)
   if ((W == 0) || (H == 0))
     return;
 
-  frameBuffer->draw(dst, X - x(), Y - y(), X, Y, W, H);
+  if (scale == 100) {
+    frameBuffer->draw(dst, X - x(), Y - y(), X, Y, W, H);
+  } else {
+    int sx, sy, sw, sh, dx, dy, dw, dh;
+    computeScaledRects(X, Y, W, H, &sx, &sy, &sw, &sh, &dx, &dy, &dw, &dh);
+    if ((sw <= 0) || (sh <= 0))
+      return;
+    frameBuffer->drawStretched(dst, sx, sy, sw, sh, dx, dy, dw, dh);
+  }
 }
 
 
@@ -405,21 +465,50 @@ void Viewport::draw()
   if ((W == 0) || (H == 0))
     return;
 
-  frameBuffer->draw(X - x(), Y - y(), X, Y, W, H);
+  if (scale == 100) {
+    frameBuffer->draw(X - x(), Y - y(), X, Y, W, H);
+  } else {
+    int sx, sy, sw, sh, dx, dy, dw, dh;
+    computeScaledRects(X, Y, W, H, &sx, &sy, &sw, &sh, &dx, &dy, &dw, &dh);
+    if ((sw <= 0) || (sh <= 0))
+      return;
+    frameBuffer->drawStretched(sx, sy, sw, sh, dx, dy, dw, dh);
+  }
+}
+
+
+int Viewport::serverWidth() const
+{
+  return frameBuffer->width();
+}
+
+int Viewport::serverHeight() const
+{
+  return frameBuffer->height();
+}
+
+// kit-custom: server framebuffer size change (was part of resize();
+// split out so that plain widget moves/resizes never touch the
+// framebuffer)
+void Viewport::serverResize(int new_w, int new_h)
+{
+  if ((new_w != frameBuffer->width()) || (new_h != frameBuffer->height())) {
+    vlog.debug("Resizing framebuffer from %dx%d to %dx%d",
+               frameBuffer->width(), frameBuffer->height(), new_w, new_h);
+
+    frameBuffer = new PlatformPixelBuffer(new_w, new_h);
+    assert(frameBuffer);
+    cc->setFramebuffer(frameBuffer);
+  }
+
+  Fl_Widget::resize(x(), y(), scaleValue(new_w), scaleValue(new_h));
 }
 
 
 void Viewport::resize(int x, int y, int w, int h)
 {
-  if ((w != frameBuffer->width()) || (h != frameBuffer->height())) {
-    vlog.debug("Resizing framebuffer from %dx%d to %dx%d",
-               frameBuffer->width(), frameBuffer->height(), w, h);
-
-    frameBuffer = new PlatformPixelBuffer(w, h);
-    assert(frameBuffer);
-    cc->setFramebuffer(frameBuffer);
-  }
-
+  // kit-custom: pure widget geometry change; the framebuffer is only
+  // reallocated via serverResize()
   Fl_Widget::resize(x, y, w, h);
 }
 
@@ -465,7 +554,7 @@ int Viewport::handle(int event)
   case FL_LEAVE:
     window()->cursor(FL_CURSOR_DEFAULT);
     // We want a last move event to help trigger edge stuff
-    handlePointerEvent({Fl::event_x() - x(), Fl::event_y() - y()}, 0);
+    handlePointerEvent({unscaleValue(Fl::event_x() - x()), unscaleValue(Fl::event_y() - y())}, 0);
     return 1;
 
   case FL_PUSH:
@@ -508,11 +597,11 @@ int Viewport::handle(int event)
 
       // A quick press of the wheel "button", followed by a immediate
       // release below
-      handlePointerEvent({Fl::event_x() - x(), Fl::event_y() - y()},
+      handlePointerEvent({unscaleValue(Fl::event_x() - x()), unscaleValue(Fl::event_y() - y())},
                          buttonMask | wheelMask);
     } 
 
-    handlePointerEvent({Fl::event_x() - x(), Fl::event_y() - y()}, buttonMask);
+    handlePointerEvent({unscaleValue(Fl::event_x() - x()), unscaleValue(Fl::event_y() - y())}, buttonMask);
     return 1;
 
   case FL_FOCUS:

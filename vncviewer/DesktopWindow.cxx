@@ -127,6 +127,11 @@ DesktopWindow::DesktopWindow(int w, int h, CConn* cc_)
   // Hack. See below...
   fl_add_event_dispatch(fltkDispatch, this);
 
+  // kit-custom: when client-side scaling is active the viewport is
+  // smaller/larger than the framebuffer; start from the scaled size
+  w = viewport->w();
+  h = viewport->h();
+
   // kit-custom: -CropRect x,y,w,h shows only that part of the remote
   // framebuffer in a fixed-size window
   if (strcmp(cropRect, "") != 0) {
@@ -135,12 +140,14 @@ DesktopWindow::DesktopWindow(int w, int h, CConn* cc_)
                 &cx, &cy, &cw, &ch) == 4) &&
         (cx >= 0) && (cy >= 0) && (cw > 0) && (ch > 0)) {
       cropActive = true;
-      cropX = cx;
-      cropY = cy;
-      cropW = cw;
-      cropH = ch;
-      w = cw;
-      h = ch;
+      // Stored in scaled widget coordinates so that the scroll and
+      // window-size math below needs no further conversion
+      cropX = viewport->scaleValue(cx);
+      cropY = viewport->scaleValue(cy);
+      cropW = viewport->scaleCeil(cw);
+      cropH = viewport->scaleCeil(ch);
+      w = cropW;
+      h = cropH;
     } else {
       vlog.error(_("Invalid CropRect specified!"));
     }
@@ -389,7 +396,10 @@ void DesktopWindow::resizeFramebuffer(int new_w, int new_h)
 {
   bool maximized;
 
-  if ((new_w == viewport->w()) && (new_h == viewport->h()))
+  // kit-custom: compare against the logical framebuffer size, not
+  // the (possibly scaled) widget size
+  if ((new_w == viewport->serverWidth()) &&
+      (new_h == viewport->serverHeight()))
     return;
 
   maximized = false;
@@ -432,10 +442,11 @@ void DesktopWindow::resizeFramebuffer(int new_w, int new_h)
   // like they are.
   if (!fullscreen_active() && !maximized) {
     if ((w() == viewport->w()) && (h() == viewport->h()))
-      size(new_w, new_h);
+      size(viewport->scaleValue(new_w), viewport->scaleValue(new_h));
   }
 
-  viewport->size(new_w, new_h);
+  // kit-custom: reallocate framebuffer + set scaled widget size
+  viewport->serverResize(new_w, new_h);
 
   repositionWidgets();
 }
@@ -466,19 +477,24 @@ void DesktopWindow::setCursorPos(const core::Point& pos)
     // Do nothing if we do not have the mouse captured.
     return;
   }
+
+  // kit-custom: remote coords -> scaled widget coords
+  int sx = viewport->scaleValue(pos.x);
+  int sy = viewport->scaleValue(pos.y);
+
 #if defined(WIN32)
-  SetCursorPos(pos.x + x_root() + viewport->x(),
-               pos.y + y_root() + viewport->y());
+  SetCursorPos(sx + x_root() + viewport->x(),
+               sy + y_root() + viewport->y());
 #elif defined(__APPLE__)
   CGPoint new_pos;
-  new_pos.x = pos.x + x_root() + viewport->x();
-  new_pos.y = pos.y + y_root() + viewport->y();
+  new_pos.x = sx + x_root() + viewport->x();
+  new_pos.y = sy + y_root() + viewport->y();
   CGWarpMouseCursorPosition(new_pos);
 #else // Assume this is Xlib
   Window rootwindow = DefaultRootWindow(fl_display);
   XWarpPointer(fl_display, rootwindow, rootwindow, 0, 0, 0, 0,
-               pos.x + x_root() + viewport->x(),
-               pos.y + y_root() + viewport->y());
+               sx + x_root() + viewport->x(),
+               sy + y_root() + viewport->y());
 #endif
 }
 
@@ -1429,8 +1445,10 @@ void DesktopWindow::remoteResize()
     return;
   }
 
-  width = w();
-  height = h();
+  // kit-custom: the window is in scaled pixels; ask the server for
+  // the logical (unscaled) size
+  width = viewport->unscaleValue(w());
+  height = viewport->unscaleValue(h());
 
   if (!sentDesktopSize && (strcmp(desktopSize, "") != 0)) {
     // An explicit size has been requested
@@ -1441,7 +1459,13 @@ void DesktopWindow::remoteResize()
     sentDesktopSize = true;
   }
 
-  if (!fullscreen_active() || (width > w()) || (height > h())) {
+  // kit-custom: with client-side scaling the multi-screen fullscreen
+  // layout math (mixed scaled/logical units) is not meaningful, so
+  // always report a single virtual screen in that case
+  if (!fullscreen_active() ||
+      (viewport->scaleValue(100) != 100) ||
+      (viewport->scaleValue(width) > w()) ||
+      (viewport->scaleValue(height) > h())) {
     // In windowed mode (or the framebuffer is so large that we need
     // to scroll) we just report a single virtual screen that covers
     // the entire framebuffer.

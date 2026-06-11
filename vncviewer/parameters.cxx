@@ -172,6 +172,13 @@ core::StringParameter
            "Specify size and position of viewer window",
            "");
 
+core::IntParameter
+  scalePercent("ScalePercent",
+               "Scale the remote desktop by this percentage (25-400) "
+               "on the client side. 100 disables scaling. Windows "
+               "build only; other platforms ignore this.",
+               100, 25, 400);
+
 core::StringParameter
   cropRect("CropRect",
            "Show only the given rectangle (x,y,w,h in remote "
