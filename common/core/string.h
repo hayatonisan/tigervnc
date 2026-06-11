@@ -62,6 +62,14 @@ namespace core {
   std::string latin1ToUTF8(const char* src, size_t bytes = (size_t)-1);
   std::string utf8ToLatin1(const char* src, size_t bytes = (size_t)-1);
 
+  // kit-custom: charset used by the legacy (non-extended) clipboard.
+  // The RFB spec says Latin-1, but old servers (e.g. AIX Xvnc with a
+  // ja_JP locale) put EUC-JP or Shift_JIS bytes on the wire as-is.
+  // name: "latin1" (default), "eucjp", "sjis" or "utf8".
+  void setLegacyClipboardCharset(const char* name);
+  std::string legacyClipboardToUTF8(const char* src, size_t bytes = (size_t)-1);
+  std::string utf8ToLegacyClipboard(const char* src, size_t bytes = (size_t)-1);
+
   std::string utf16ToUTF8(const wchar_t* src, size_t units = (size_t)-1);
   std::wstring utf8ToUTF16(const char* src, size_t bytes = (size_t)-1);
 

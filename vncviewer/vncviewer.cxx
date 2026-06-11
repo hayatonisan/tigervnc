@@ -37,7 +37,11 @@
 #ifdef WIN32
 #include <core/winerrno.h>
 #include <direct.h>
+#include <windows.h>
 #endif
+
+#include <string>
+#include <vector>
 
 #ifdef __APPLE__
 #include <Carbon/Carbon.h>
@@ -50,6 +54,7 @@
 
 #include <core/Exception.h>
 #include <core/Logger_stdio.h>
+#include <core/string.h>
 #include <core/LogWriter.h>
 #include <core/Timer.h>
 
@@ -210,6 +215,20 @@ static void mainloop(const char* vncserver, network::Socket* sock)
       break;
 
     if(reconnectOnError && (sock == nullptr)) {
+      // kit-custom: silent automatic reconnect with fixed delay
+      if (autoReconnect > 0) {
+        vlog.info(_("Connection lost (%s), reconnecting in %d s"),
+                  exitError, (int)autoReconnect);
+        free(exitError);
+        exitError = nullptr;
+#ifdef WIN32
+        Sleep((DWORD)autoReconnect * 1000);
+#else
+        sleep(autoReconnect);
+#endif
+        continue;
+      }
+
       int ret;
       ret = fl_choice(_("%s\n\n"
                         "Attempt to reconnect?"),
@@ -629,6 +648,66 @@ static void mktunnel()
 }
 #endif /* !WIN32 */
 
+// kit-custom: launch one detached viewer instance with the given
+// extra arguments (used by the -Sessions multi-connection launcher)
+static bool spawnViewer(const std::string& args)
+{
+#ifdef WIN32
+  char exepath[MAX_PATH];
+  if (GetModuleFileNameA(nullptr, exepath, MAX_PATH) == 0)
+    return false;
+  std::string cmdline = "\"" + std::string(exepath) + "\" " + args;
+  STARTUPINFOA si;
+  PROCESS_INFORMATION pi;
+  memset(&si, 0, sizeof(si));
+  si.cb = sizeof(si);
+  std::vector<char> buf(cmdline.begin(), cmdline.end());
+  buf.push_back('\0');
+  if (!CreateProcessA(nullptr, buf.data(), nullptr, nullptr, FALSE,
+                      0, nullptr, nullptr, &si, &pi))
+    return false;
+  CloseHandle(pi.hThread);
+  CloseHandle(pi.hProcess);
+  return true;
+#else
+  std::string cmdline = std::string(argv0) + " " + args + " &";
+  return system(cmdline.c_str()) == 0;
+#endif
+}
+
+// kit-custom: read a session list file and start one viewer process
+// per line. Returns the number of sessions launched, or -1 on error.
+static int launchSessions(const char* path)
+{
+  FILE* f = fopen(path, "r");
+  if (f == nullptr) {
+    vlog.error(_("Could not open session list \"%s\": %s"),
+               path, strerror(errno));
+    return -1;
+  }
+
+  int count = 0;
+  char line[1024];
+  while (fgets(line, sizeof(line), f) != nullptr) {
+    char* p = line;
+    while (*p == ' ' || *p == '\t')
+      p++;
+    size_t len = strlen(p);
+    while (len > 0 && (p[len-1] == '\n' || p[len-1] == '\r' ||
+                       p[len-1] == ' '  || p[len-1] == '\t'))
+      p[--len] = '\0';
+    if (len == 0 || *p == '#')
+      continue;
+    if (spawnViewer(p))
+      count++;
+    else
+      vlog.error(_("Could not launch session: %s"), p);
+  }
+  fclose(f);
+
+  return count;
+}
+
 int main(int argc, char** argv)
 {
   const char *localedir;
@@ -722,6 +801,19 @@ int main(int argc, char** argv)
     i++;
   }
 
+  // kit-custom: -Sessions <file> launches one viewer per line and exits
+  if (strlen(sessions) > 0) {
+    int n = launchSessions(sessions);
+    if (n <= 0) {
+      fprintf(stderr, _("No sessions could be launched from \"%s\"\n"),
+              (const char*)sessions);
+      return 1;
+    }
+    fprintf(stderr, _("Launched %d session(s) from \"%s\"\n"),
+            n, (const char*)sessions);
+    return 0;
+  }
+
 #if !defined(WIN32) && !defined(__APPLE__)
   if (strcmp(display, "") != 0) {
     Fl::display(display);
@@ -737,6 +829,9 @@ int main(int argc, char** argv)
   potentiallyLoadConfigurationFile(vncServerName);
 
   migrateDeprecatedOptions();
+
+  // kit-custom: apply legacy clipboard charset override
+  core::setLegacyClipboardCharset(remoteCharset.getValueStr().c_str());
 
   create_base_dirs();
 

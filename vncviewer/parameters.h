@@ -61,6 +61,10 @@ extern core::BoolParameter remoteResize;
 
 extern core::BoolParameter listenMode;
 
+extern core::StringParameter sessions;
+extern core::IntParameter autoReconnect;
+extern core::EnumParameter remoteCharset;
+
 extern core::BoolParameter viewOnly;
 extern core::BoolParameter shared;
 

@@ -177,6 +177,28 @@ core::BoolParameter
              "Listen for connections from VNC servers",
              false);
 
+core::EnumParameter
+  remoteCharset("RemoteCharset",
+                "Character set used by the server for the legacy "
+                "clipboard. Old unix servers with a Japanese locale "
+                "typically use eucjp.",
+                {"latin1", "eucjp", "sjis", "utf8"},
+                "latin1");
+
+core::IntParameter
+  autoReconnect("AutoReconnect",
+                "Automatically reconnect after a lost connection, "
+                "waiting this many seconds between attempts. 0 asks "
+                "with a dialog instead (requires ReconnectOnError).",
+                0, 0, 3600);
+
+core::StringParameter
+  sessions("Sessions",
+           "Launch one viewer instance per line of the given session "
+           "list file, then exit. Each line contains the arguments for "
+           "one connection. Lines starting with # are ignored.",
+           "");
+
 core::BoolParameter
   remoteResize("RemoteResize",
                "Dynamically resize the remote desktop size as the size "

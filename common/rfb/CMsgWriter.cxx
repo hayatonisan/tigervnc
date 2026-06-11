@@ -227,7 +227,8 @@ void CMsgWriter::writeClientCutText(const char* str)
   if (strchr(str, '\r') != nullptr)
     throw std::invalid_argument("Invalid carriage return in clipboard data");
 
-  std::string latin1(core::utf8ToLatin1(str));
+  // kit-custom: honour RemoteCharset instead of assuming Latin-1
+  std::string latin1(core::utf8ToLegacyClipboard(str));
 
   startMsg(msgTypeClientCutText);
   os->pad(3);

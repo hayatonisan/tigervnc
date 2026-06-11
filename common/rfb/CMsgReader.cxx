@@ -295,7 +295,8 @@ bool CMsgReader::readServerCutText()
   std::vector<char> ca(len);
   is->readBytes((uint8_t*)ca.data(), len);
 
-  std::string utf8(core::latin1ToUTF8(ca.data(), ca.size()));
+  // kit-custom: honour RemoteCharset instead of assuming Latin-1
+  std::string utf8(core::legacyClipboardToUTF8(ca.data(), ca.size()));
   std::string filtered(core::convertLF(utf8.data(), utf8.size()));
 
   handler->serverCutText(filtered.c_str());

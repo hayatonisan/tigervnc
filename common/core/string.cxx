@@ -27,6 +27,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef WIN32
+#include <windows.h>
+#endif
+
 #include <core/string.h>
 
 namespace core {
@@ -479,6 +483,121 @@ namespace core {
 
     return out;
   }
+
+  // kit-custom: legacy clipboard charset override -----------------------
+
+  enum LegacyClipboardCharset {
+    LCC_LATIN1,
+    LCC_EUCJP,
+    LCC_SJIS,
+    LCC_UTF8,
+  };
+
+  static LegacyClipboardCharset legacyClipboardCharset = LCC_LATIN1;
+
+  void setLegacyClipboardCharset(const char* name)
+  {
+    if (name == nullptr)
+      return;
+    if (strcasecmp(name, "eucjp") == 0 || strcasecmp(name, "euc-jp") == 0)
+      legacyClipboardCharset = LCC_EUCJP;
+    else if (strcasecmp(name, "sjis") == 0 || strcasecmp(name, "shift_jis") == 0)
+      legacyClipboardCharset = LCC_SJIS;
+    else if (strcasecmp(name, "utf8") == 0 || strcasecmp(name, "utf-8") == 0)
+      legacyClipboardCharset = LCC_UTF8;
+    else
+      legacyClipboardCharset = LCC_LATIN1;
+  }
+
+#ifdef WIN32
+  // Windows code page ids: 20932 = EUC-JP, 932 = Shift_JIS (CP932)
+  static UINT legacyClipboardCodePage()
+  {
+    switch (legacyClipboardCharset) {
+    case LCC_EUCJP: return 20932;
+    case LCC_SJIS:  return 932;
+    default:        return 0;
+    }
+  }
+
+  static std::string cpToUTF8(UINT cp, const char* src, size_t bytes)
+  {
+    if (bytes == (size_t)-1)
+      bytes = strlen(src);
+
+    int wlen = MultiByteToWideChar(cp, 0, src, (int)bytes, nullptr, 0);
+    if (wlen <= 0)
+      return latin1ToUTF8(src, bytes);
+    std::wstring wide(wlen, L'\0');
+    MultiByteToWideChar(cp, 0, src, (int)bytes, &wide[0], wlen);
+
+    int ulen = WideCharToMultiByte(CP_UTF8, 0, wide.data(), wlen,
+                                   nullptr, 0, nullptr, nullptr);
+    if (ulen <= 0)
+      return latin1ToUTF8(src, bytes);
+    std::string out(ulen, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wide.data(), wlen,
+                        &out[0], ulen, nullptr, nullptr);
+    return out;
+  }
+
+  static std::string utf8ToCp(UINT cp, const char* src, size_t bytes)
+  {
+    if (bytes == (size_t)-1)
+      bytes = strlen(src);
+
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, src, (int)bytes, nullptr, 0);
+    if (wlen <= 0)
+      return utf8ToLatin1(src, bytes);
+    std::wstring wide(wlen, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, src, (int)bytes, &wide[0], wlen);
+
+    int mlen = WideCharToMultiByte(cp, 0, wide.data(), wlen,
+                                   nullptr, 0, nullptr, nullptr);
+    if (mlen <= 0)
+      return utf8ToLatin1(src, bytes);
+    std::string out(mlen, '\0');
+    WideCharToMultiByte(cp, 0, wide.data(), wlen,
+                        &out[0], mlen, nullptr, nullptr);
+    return out;
+  }
+#endif
+
+  std::string legacyClipboardToUTF8(const char* src, size_t bytes)
+  {
+    switch (legacyClipboardCharset) {
+    case LCC_UTF8:
+      if (bytes == (size_t)-1)
+        return std::string(src);
+      return std::string(src, strnlen(src, bytes));
+#ifdef WIN32
+    case LCC_EUCJP:
+    case LCC_SJIS:
+      return cpToUTF8(legacyClipboardCodePage(), src, bytes);
+#endif
+    default:
+      return latin1ToUTF8(src, bytes);
+    }
+  }
+
+  std::string utf8ToLegacyClipboard(const char* src, size_t bytes)
+  {
+    switch (legacyClipboardCharset) {
+    case LCC_UTF8:
+      if (bytes == (size_t)-1)
+        return std::string(src);
+      return std::string(src, strnlen(src, bytes));
+#ifdef WIN32
+    case LCC_EUCJP:
+    case LCC_SJIS:
+      return utf8ToCp(legacyClipboardCodePage(), src, bytes);
+#endif
+    default:
+      return utf8ToLatin1(src, bytes);
+    }
+  }
+
+  // ----------------------------------------------------------------------
 
   std::string utf16ToUTF8(const wchar_t* src, size_t units)
   {
