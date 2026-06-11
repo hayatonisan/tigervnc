@@ -1,0 +1,59 @@
+name: Kit Build (portable Windows viewer)
+
+# aix-x11-kit 向けカスタム vncviewer のビルド。
+# 成果物: tigervnc-portable/ (vncviewer.exe + 依存DLL一式、インストール不要)
+
+on:
+  push:
+    branches: [kit-custom]
+  workflow_dispatch:
+
+jobs:
+  viewer-win:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      VERBOSE: 1
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          update: true
+      - name: Install dependencies
+        run: |
+          pacman --sync --noconfirm --needed \
+            make mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake
+          pacman --sync --noconfirm --needed \
+            mingw-w64-x86_64-fltk1.3 mingw-w64-x86_64-libjpeg-turbo \
+            mingw-w64-x86_64-gnutls mingw-w64-x86_64-pixman \
+            mingw-w64-x86_64-nettle mingw-w64-x86_64-gmp
+      - name: Configure
+        run: |
+          cmake \
+            -G "MSYS Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_NLS=ON \
+            -DENABLE_H264=OFF \
+            -DENABLE_GNUTLS=ON \
+            -DENABLE_NETTLE=ON \
+            -DBUILD_VIEWER=ON \
+            -S . -B build
+      - name: Build viewer
+        working-directory: build
+        run: make -j4
+      - name: Package portable folder
+        run: |
+          mkdir -p dist/tigervnc-portable
+          cp build/vncviewer/vncviewer.exe dist/tigervnc-portable/
+          # 依存する mingw64 DLL を実行ファイルから逆引きして同梱
+          for dll in $(ldd build/vncviewer/vncviewer.exe | awk '/mingw64/ {print $3}'); do
+            cp "$dll" dist/tigervnc-portable/
+          done
+          ls -la dist/tigervnc-portable
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tigervnc-portable
+          path: dist/tigervnc-portable
