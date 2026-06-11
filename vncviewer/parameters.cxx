@@ -172,6 +172,15 @@ core::StringParameter
            "Specify size and position of viewer window",
            "");
 
+core::StringParameter
+  cropRect("CropRect",
+           "Show only the given rectangle (x,y,w,h in remote "
+           "framebuffer coordinates) of the remote desktop, in a "
+           "fixed-size window. Combine multiple viewer instances "
+           "with different rectangles to emulate per-application "
+           "windows.",
+           "");
+
 core::BoolParameter
   listenMode("listen",
              "Listen for connections from VNC servers",

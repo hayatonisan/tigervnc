@@ -140,6 +140,10 @@ private:
   bool delayedFullscreen;
   bool sentDesktopSize;
 
+  // kit-custom: fixed sub-rectangle view of the remote framebuffer
+  bool cropActive;
+  int cropX, cropY, cropW, cropH;
+
   bool pendingRemoteResize;
   struct timeval lastResize;
 

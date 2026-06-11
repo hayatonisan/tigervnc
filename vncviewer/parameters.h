@@ -57,6 +57,7 @@ extern core::BoolParameter fullScreenAllMonitors; // deprecated
 extern MonitorIndicesParameter fullScreenSelectedMonitors;
 extern core::StringParameter desktopSize;
 extern core::StringParameter geometry;
+extern core::StringParameter cropRect;
 extern core::BoolParameter remoteResize;
 
 extern core::BoolParameter listenMode;

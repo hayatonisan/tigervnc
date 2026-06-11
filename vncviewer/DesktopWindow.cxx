@@ -89,6 +89,7 @@ DesktopWindow::DesktopWindow(int w, int h, CConn* cc_)
   : Fl_Window(w, h), cc(cc_), offscreen(nullptr),
     firstUpdate(true),
     delayedFullscreen(false), sentDesktopSize(false),
+    cropActive(false), cropX(0), cropY(0), cropW(0), cropH(0),
     pendingRemoteResize(false), lastResize({0, 0}),
     keyboardGrabbed(false), mouseGrabbed(false), regrabOnFocus(false),
     statsLastUpdates(0), statsLastPixels(0), statsLastPosition(0),
@@ -125,6 +126,25 @@ DesktopWindow::DesktopWindow(int w, int h, CConn* cc_)
 
   // Hack. See below...
   fl_add_event_dispatch(fltkDispatch, this);
+
+  // kit-custom: -CropRect x,y,w,h shows only that part of the remote
+  // framebuffer in a fixed-size window
+  if (strcmp(cropRect, "") != 0) {
+    int cx, cy, cw, ch;
+    if ((sscanf((const char*)cropRect, "%d,%d,%d,%d",
+                &cx, &cy, &cw, &ch) == 4) &&
+        (cx >= 0) && (cy >= 0) && (cw > 0) && (ch > 0)) {
+      cropActive = true;
+      cropX = cx;
+      cropY = cy;
+      cropW = cw;
+      cropH = ch;
+      w = cw;
+      h = ch;
+    } else {
+      vlog.error(_("Invalid CropRect specified!"));
+    }
+  }
 
   // Support for -geometry option. Note that although we do support
   // negative coordinates, we do not support -XOFF-YOFF (ie
@@ -226,6 +246,12 @@ DesktopWindow::DesktopWindow(int w, int h, CConn* cc_)
 
   // Adjust layout now that we're visible and know our final size
   repositionWidgets();
+
+  // kit-custom: lock the window to the crop rectangle and scroll to it
+  if (cropActive) {
+    size_range(cropW, cropH, cropW, cropH);
+    scrollTo(cropX, cropY);
+  }
 
   // Throughput graph for debugging
   if (vlog.getLevel() >= core::LogWriter::LEVEL_DEBUG) {
@@ -1378,6 +1404,10 @@ void DesktopWindow::remoteResize()
   if (viewOnly)
     return;
 
+  // kit-custom: never resize the server to a crop window's size
+  if (cropActive)
+    return;
+
   if (!::remoteResize)
     return;
   if (!cc->server.supportsSetDesktopSize)
@@ -1570,7 +1600,8 @@ void DesktopWindow::repositionWidgets()
 
   // Scrollbars visbility
 
-  if (fullscreen_active()) {
+  if (fullscreen_active() || cropActive) {
+    // kit-custom: a cropped window never shows scrollbars
     hscroll->hide();
     vscroll->hide();
   } else {
