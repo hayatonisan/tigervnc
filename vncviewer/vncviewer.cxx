@@ -37,6 +37,7 @@
 #ifdef WIN32
 #include <core/winerrno.h>
 #include <direct.h>
+#include <winsock2.h>
 #include <windows.h>
 #endif
 
@@ -607,7 +608,74 @@ create_base_dirs()
   }
 }
 
-#ifndef WIN32
+#ifdef WIN32
+// kit-custom: -via support on Windows using the bundled OpenSSH
+// client (ssh.exe). The tunnel process is tied to this process via a
+// job object so that it dies together with the viewer.
+static void
+createTunnel(const char *gatewayHost, const char *remoteHost,
+             int remotePort, int localPort)
+{
+  char cmdline[1024];
+
+  snprintf(cmdline, sizeof(cmdline),
+           "ssh.exe -o ExitOnForwardFailure=yes -o BatchMode=yes "
+           "-o ServerAliveInterval=30 -L %d:%s:%d -N %s",
+           localPort, remoteHost, remotePort, gatewayHost);
+
+  vlog.info(_("Starting SSH tunnel: %s"), cmdline);
+
+  STARTUPINFOA si;
+  PROCESS_INFORMATION pi;
+  memset(&si, 0, sizeof(si));
+  si.cb = sizeof(si);
+
+  HANDLE job = CreateJobObjectA(nullptr, nullptr);
+  if (job != nullptr) {
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli;
+    memset(&jeli, 0, sizeof(jeli));
+    jeli.BasicLimitInformation.LimitFlags =
+      JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+                            &jeli, sizeof(jeli));
+  }
+
+  if (!CreateProcessA(nullptr, cmdline, nullptr, nullptr, FALSE,
+                      CREATE_SUSPENDED | CREATE_NO_WINDOW,
+                      nullptr, nullptr, &si, &pi)) {
+    vlog.error(_("Could not start ssh.exe for the tunnel"));
+    return;
+  }
+  if (job != nullptr)
+    AssignProcessToJobObject(job, pi.hProcess);
+  ResumeThread(pi.hThread);
+  CloseHandle(pi.hThread);
+  CloseHandle(pi.hProcess);
+  // The job handle is intentionally kept open for the lifetime of
+  // this process so the tunnel is killed when the viewer exits.
+
+  // Wait for the forwarded port to come up (max ~20 s)
+  for (int i = 0; i < 40; i++) {
+    SOCKET s;
+    sockaddr_in sa;
+    int r;
+
+    s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s == INVALID_SOCKET)
+      break;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons((u_short)localPort);
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    r = ::connect(s, (sockaddr*)&sa, sizeof(sa));
+    closesocket(s);
+    if (r == 0)
+      return;
+    Sleep(500);
+  }
+  vlog.error(_("Timeout waiting for the SSH tunnel to come up"));
+}
+#else
 static void
 createTunnel(const char *gatewayHost, const char *remoteHost,
              int remotePort, int localPort)
@@ -632,6 +700,7 @@ createTunnel(const char *gatewayHost, const char *remoteHost,
     fprintf(stderr, "Failed to create tunnel: '%s' returned %d\n", cmd2, res);
   free(cmd2);
 }
+#endif /* WIN32 */
 
 static void mktunnel()
 {
@@ -646,7 +715,6 @@ static void mktunnel()
   gatewayHost = (const char*)via;
   createTunnel(gatewayHost, remoteHost.c_str(), remotePort, localPort);
 }
-#endif /* !WIN32 */
 
 // kit-custom: launch one detached viewer instance with the given
 // extra arguments (used by the -Sessions multi-connection launcher)
@@ -837,7 +905,6 @@ int main(int argc, char** argv)
 
   network::Socket* sock = nullptr;
 
-#ifndef WIN32
   /* Specifying -via and -listen together is nonsense */
   if (listenMode && strlen(via) > 0) {
     // TRANSLATORS: "Parameters" are command line arguments, or settings
@@ -846,7 +913,6 @@ int main(int argc, char** argv)
     abort_vncviewer(_("Parameters -listen and -via are incompatible"));
     return 1; /* Not reached */
   }
-#endif
 
   if (listenMode) {
     std::list<network::SocketListener*> listeners;
@@ -903,7 +969,6 @@ int main(int argc, char** argv)
         return 1;
     }
 
-#ifndef WIN32
     if (strlen(via) > 0) {
       try {
         mktunnel();
@@ -912,7 +977,6 @@ int main(int argc, char** argv)
         abort_vncviewer(_("Failure setting up encrypted tunnel:\n\n%s"), e.what());
       }
     }
-#endif
   }
 
   inMainloop = true;

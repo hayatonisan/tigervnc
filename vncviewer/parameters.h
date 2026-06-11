@@ -83,9 +83,7 @@ extern core::BoolParameter fullscreenSystemKeys;
 extern core::BoolParameter alertOnFatalError;
 extern core::BoolParameter reconnectOnError;
 
-#ifndef WIN32
 extern core::StringParameter via;
-#endif
 
 void saveViewerParameters(const char *filename, const char *servername=nullptr);
 char* loadViewerParameters(const char *filename);
